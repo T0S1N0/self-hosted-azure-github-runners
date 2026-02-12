@@ -144,18 +144,13 @@ Requires [GitHub CLI](https://cli.github.com/) (`gh`) and `gh auth login`.
 ```bash
 cd /path/to/self-hosted-azure-github-runners
 
-# Set each secret (you'll be prompted for the value, or pipe it)
-echo -n "YOUR_AZURE_CLIENT_ID"   | gh secret set AZURE_CLIENT_ID
-echo -n "YOUR_AZURE_TENANT_ID"   | gh secret set AZURE_TENANT_ID
-echo -n "YOUR_AZURE_SUBSCRIPTION_ID" | gh secret set AZURE_SUBSCRIPTION_ID
-```
-
-Or set from the variables you already have:
-
-```bash
+# Azure secrets
 gh secret set AZURE_CLIENT_ID        --body "$AZURE_APP"
 gh secret set AZURE_TENANT_ID        --body "$(az account show --query tenantId -o tsv)"
 gh secret set AZURE_SUBSCRIPTION_ID  --body "$(az account show --query id -o tsv)"
+
+# GitHub PAT for runner registration (create at https://github.com/settings/tokens/new with 'repo' scope)
+gh secret set GH_PAT  # paste your PAT when prompted
 ```
 
 ---

@@ -39,12 +39,13 @@ In the repo: **Settings → Secrets and variables → Actions**, add:
 | `AZURE_CLIENT_ID` | Application (client) ID of the app registration |
 | `AZURE_TENANT_ID` | Azure AD (tenant) ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `GH_PAT` | GitHub Personal Access Token with `repo` scope (for runner registration) |
 
-No GitHub PAT is needed: the workflow uses the built-in `GITHUB_TOKEN` to create a runner registration token via the API.
+The workflow uses `GH_PAT` to create runner registration tokens via the GitHub API (the built-in `GITHUB_TOKEN` lacks this permission).
 
 ### Terraform state
 
-The workflow uses **local** Terraform state (in the runner workspace). Each run sees the state from that run only. For **repeated or production use**, configure a [remote backend](https://developer.hashicorp.com/terraform/language/settings/backend) (e.g. `azurerm`) and pass backend config via environment or a backend block in Terraform.
+The workflow uses an **Azure backend** for Terraform state persistence (configured in `terraform/versions.tf`). The backend is: storage account `tfstatefiles01`, container `tfstate`, resource group `rg-terraform`, key `github-runners.tfstate`.
 
 ### Run the workflow
 
