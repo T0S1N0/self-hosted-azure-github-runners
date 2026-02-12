@@ -83,17 +83,18 @@ jobs:
           echo "GITHUB_RUNNER_REGISTRATION_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Generate Ansible inventory
+        working-directory: ${{ github.workspace }}
         run: |
-          cd "$GITHUB_WORKSPACE"
           chmod +x scripts/generate-inventory.sh
           ./scripts/generate-inventory.sh ${{ env.TF_VAR_admin_username }}
 
       - name: Set up Ansible
+        working-directory: ${{ github.workspace }}
         run: |
           sudo apt-get update && sudo apt-get install -y ansible
-        working-directory: ${{ github.workspace }}
 
       - name: Configure runners (Ansible)
+        working-directory: ${{ github.workspace }}
         run: |
           cd ansible
           export GITHUB_RUNNER_REGISTRATION_TOKEN="${{ steps.token.outputs.token }}"
@@ -102,8 +103,8 @@ jobs:
             -e "ansible_ssh_private_key_file=${{ github.workspace }}/ansible/runner_key.pem"
         env:
           ANSIBLE_HOST_KEY_CHECKING: false
-        working-directory: ${{ github.workspace }}
 
       - name: Clean up runner key from workspace
         if: always()
-        run: rm -f "$GITHUB_WORKSPACE/ansible/runner_key.pem"
+        working-directory: ${{ github.workspace }}
+        run: rm -f ansible/runner_key.pem
