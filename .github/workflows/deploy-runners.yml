@@ -89,8 +89,11 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token" \
             | jq -r '.token')
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "Error: Failed to get registration token"
+            exit 1
+          fi
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
-          echo "GITHUB_RUNNER_REGISTRATION_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Generate Ansible inventory
         working-directory: ${{ github.workspace }}
@@ -122,9 +125,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           cd ansible
-          export GITHUB_RUNNER_REGISTRATION_TOKEN="${{ steps.token.outputs.token }}"
           ansible-playbook configure_runners.yml \
             -e "github_repo_url=https://github.com/${{ github.repository }}" \
+            -e "github_runner_registration_token=${{ steps.token.outputs.token }}" \
             -e "ansible_ssh_private_key_file=${{ github.workspace }}/ansible/runner_key.pem"
         env:
           ANSIBLE_HOST_KEY_CHECKING: false
