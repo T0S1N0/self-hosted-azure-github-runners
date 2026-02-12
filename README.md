@@ -2,6 +2,8 @@
 
 Automate the deployment and configuration of self-hosted GitHub Actions runners on Azure using **Terraform** for infrastructure and **Ansible** for VM setup.
 
+**Part of the [Portfolio on Azure](https://github.com/T0S1N0/Portfolio)** - See also: [Azure Serverless E-Commerce Platform](https://github.com/T0S1N0/Azure-Serverless-E-Commerce-Platform)
+
 ## Overview
 
 1. **Terraform** provisions Azure resources: resource group, virtual network, subnet, and Linux VMs with public IPs.
@@ -234,3 +236,19 @@ terraform destroy
 ```
 
 Remove runners from GitHub (**Settings → Actions → Runners**) before or after destroying the VMs.
+
+---
+
+## 🔗 Related Projects
+
+- **[Portfolio on Azure](https://github.com/T0S1N0/Portfolio)** - Personal portfolio showcasing cloud infrastructure projects
+- **[Azure Serverless E-Commerce Platform](https://github.com/T0S1N0/Azure-Serverless-E-Commerce-Platform)** - Full-stack serverless e-commerce platform
+
+---
+
+## 👤 Author
+
+**Miquel Martin Leiva**
+
+- GitHub: [@T0S1N0](https://github.com/T0S1N0)
+- LinkedIn: [Miquel Martin Leiva](https://www.linkedin.com/in/miquel-martin-leiva/)
