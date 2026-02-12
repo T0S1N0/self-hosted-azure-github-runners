@@ -17,7 +17,7 @@ if [[ ! -d "$TERRAFORM_DIR" ]]; then
 fi
 
 cd "$TERRAFORM_DIR"
-if ! terraform output -raw runner_public_ips_list &>/dev/null; then
+if ! terraform output -json runner_public_ips_list &>/dev/null; then
   echo "Error: Run 'terraform apply' first and ensure runner_public_ips_list output exists." >&2
   exit 1
 fi
