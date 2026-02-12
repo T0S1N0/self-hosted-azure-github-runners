@@ -84,13 +84,15 @@ jobs:
       - name: Get runner registration token
         id: token
         run: |
-          TOKEN=$(curl -s -X POST \
+          RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token" \
-            | jq -r '.token')
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token")
+          echo "API Response: $RESPONSE"
+          TOKEN=$(echo "$RESPONSE" | jq -r '.token')
           if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
             echo "Error: Failed to get registration token"
+            echo "Response was: $RESPONSE"
             exit 1
           fi
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
