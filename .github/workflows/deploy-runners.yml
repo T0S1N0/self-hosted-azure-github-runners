@@ -1,11 +1,23 @@
-# Deploy self-hosted GitHub Actions runners on Azure (Terraform + Ansible).
-# Requires: Azure OIDC (or service principal) and optional Terraform backend for state.
-# See README "Automated deployment (GitHub Actions)" for setup.
+# Deploy self-hosted GitHub Actions runners on Azure
+# Full automation: Terraform → Ansible → Configure runners
+# See README "Automated deployment (GitHub Actions)" for setup
 
-name: Deploy self-hosted runners
+name: 🚀 Deploy Self-Hosted Runners
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      runner_count:
+        description: 'Number of runners to deploy'
+        required: false
+        default: '3'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '5'
+          - '10'
   push:
     branches: [main]
     paths:
@@ -16,93 +28,136 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # for Azure OIDC
-  actions: write    # for creating runner registration token
+  id-token: write   # Azure OIDC authentication
+  actions: write    # Job summaries
 
 env:
-  TF_VAR_runner_count: 3
+  TF_VAR_runner_count: ${{ github.event.inputs.runner_count || '3' }}
   TF_VAR_admin_username: azureuser
+  AZURE_RESOURCE_GROUP: github-runners-rg
 
 jobs:
   deploy:
-    name: Terraform + Ansible
+    name: 🏗️ Deploy Infrastructure & Configure Runners
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: terraform
 
     steps:
-      - name: Checkout
+      # ==================== SETUP ====================
+      - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate SSH key pair
+      - name: 🔑 Generate SSH key pair for VMs
         id: ssh-key
         run: |
-          ssh-keygen -t rsa -b 4096 -f runner_key -N "" -C "github-actions"
+          echo "::group::Generating RSA-4096 key pair"
+          ssh-keygen -t rsa -b 4096 -f runner_key -N "" -C "github-actions-${{ github.run_id }}"
+          echo "::endgroup::"
+          
           echo "public_key<<EOF" >> $GITHUB_OUTPUT
           cat runner_key.pub >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-          # Private key for Ansible (later step); store in runner for this job
+          
+          # Store private key for Ansible
           cp runner_key "$GITHUB_WORKSPACE/ansible/runner_key.pem"
           chmod 600 "$GITHUB_WORKSPACE/ansible/runner_key.pem"
+          
+          echo "✅ SSH key pair generated"
 
-      - name: Azure Login (OIDC)
+      # ==================== AZURE & TERRAFORM ====================
+      - name: 🔐 Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
+      - name: ⚙️ Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
           terraform_wrapper: false
 
-      - name: Terraform Init
-        run: terraform init
+      - name: 🔧 Terraform Init
+        run: |
+          echo "::group::Initializing Terraform with Azure backend"
+          terraform init
+          echo "::endgroup::"
+          echo "✅ Terraform initialized (backend: azurerm)"
         env:
           ARM_USE_OIDC: true
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Terraform Apply
-        id: terraform-apply
+      - name: 📋 Terraform Plan
+        id: plan
         run: |
-          terraform apply -auto-approve -input=false
-          echo "runner_ips=$(terraform output -json runner_public_ips_list)" >> $GITHUB_OUTPUT
+          echo "::group::Planning infrastructure changes"
+          terraform plan -out=tfplan -input=false
+          echo "::endgroup::"
         env:
           ARM_USE_OIDC: true
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
-          # Optional: pass tfvars from secrets or use defaults
-          # TF_VAR_resource_group_name: ${{ secrets.TF_VAR_resource_group_name }}
 
-      - name: Get runner registration token
+      - name: 🚀 Terraform Apply
+        id: terraform-apply
+        run: |
+          echo "::group::Applying Terraform configuration"
+          terraform apply -auto-approve tfplan
+          echo "::endgroup::"
+          
+          echo "::group::Resource outputs"
+          terraform output
+          echo "::endgroup::"
+          
+          IPS=$(terraform output -json runner_public_ips_list)
+          echo "runner_ips=$IPS" >> $GITHUB_OUTPUT
+          
+          echo "✅ Infrastructure deployed successfully"
+          echo "📍 Runner IPs: $(echo $IPS | jq -r 'join(", ")')"
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+
+      # ==================== GITHUB RUNNER TOKEN ====================
+      - name: 🎫 Get runner registration token
         id: token
         run: |
+          echo "::group::Requesting runner registration token from GitHub API"
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token")
-          echo "API Response: $RESPONSE"
+          echo "::endgroup::"
+          
           TOKEN=$(echo "$RESPONSE" | jq -r '.token')
           if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "Error: Failed to get registration token"
-            echo "Response was: $RESPONSE"
+            echo "❌ Error: Failed to get registration token"
+            echo "Response: $RESPONSE"
             exit 1
           fi
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "✅ Registration token obtained"
 
-      - name: Generate Ansible inventory
+      # ==================== ANSIBLE CONFIGURATION ====================
+      - name: 📝 Generate Ansible inventory
         working-directory: ${{ github.workspace }}
         run: |
+          echo "::group::Creating Ansible inventory from Terraform outputs"
           IPS='${{ steps.terraform-apply.outputs.runner_ips }}'
+          
           {
-            echo "# Ansible inventory generated by GitHub Actions"
+            echo "# Ansible inventory - Auto-generated by GitHub Actions"
+            echo "# Workflow: ${{ github.workflow }} #${{ github.run_number }}"
             echo "# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
             echo ""
             echo "[runners]"
@@ -115,26 +170,81 @@ jobs:
             echo "[runners:vars]"
             echo "ansible_user=${{ env.TF_VAR_admin_username }}"
           } > ansible/hosts
-          echo "Generated ansible/hosts:"
+          echo "::endgroup::"
+          
+          echo "📋 Ansible inventory:"
           cat ansible/hosts
+          echo ""
+          echo "✅ Inventory generated with ${{ env.TF_VAR_runner_count }} host(s)"
 
-      - name: Set up Ansible
+      - name: 📦 Install Ansible
         working-directory: ${{ github.workspace }}
         run: |
-          sudo apt-get update && sudo apt-get install -y ansible
+          echo "::group::Installing Ansible"
+          sudo apt-get update -qq
+          sudo apt-get install -y ansible
+          echo "::endgroup::"
+          echo "✅ Ansible $(ansible --version | head -n1) installed"
 
-      - name: Configure runners (Ansible)
-        working-directory: ${{ github.workspace }}
+      - name: 🤖 Configure runners with Ansible
+        working-directory: ${{ github.workspace }}/ansible
         run: |
-          cd ansible
+          echo "::group::Running Ansible playbook"
+          echo "🎯 Target: ${{ env.TF_VAR_runner_count }} runners"
+          echo "📦 Repository: ${{ github.repository }}"
+          echo ""
+          
           ansible-playbook configure_runners.yml \
             -e "github_repo_url=https://github.com/${{ github.repository }}" \
             -e "github_runner_registration_token=${{ steps.token.outputs.token }}" \
             -e "ansible_ssh_private_key_file=${{ github.workspace }}/ansible/runner_key.pem"
+          echo "::endgroup::"
+          
+          echo ""
+          echo "✅ All runners configured and started successfully!"
         env:
           ANSIBLE_HOST_KEY_CHECKING: false
 
-      - name: Clean up runner key from workspace
+      # ==================== SUMMARY & CLEANUP ====================
+      - name: 📊 Generate deployment summary
+        if: success()
+        run: |
+          IPS='${{ steps.terraform-apply.outputs.runner_ips }}'
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🎉 Deployment Successful!
+          
+          ### 🖥️ Infrastructure
+          - **Resource Group:** `${{ env.AZURE_RESOURCE_GROUP }}`
+          - **Region:** East US
+          - **Runners Deployed:** ${{ env.TF_VAR_runner_count }}
+          
+          ### 📍 Runner IP Addresses
+          EOF
+          
+          i=1
+          for ip in $(echo "$IPS" | jq -r '.[]'); do
+            echo "- **runner-$i:** \`$ip\`" >> $GITHUB_STEP_SUMMARY
+            ((i++))
+          done
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ### ✅ Next Steps
+          1. Verify runners: [Settings → Actions → Runners](https://github.com/${{ github.repository }}/settings/actions/runners)
+          2. Runners should show as **Idle** and **Online**
+          3. Use in workflows with: `runs-on: self-hosted`
+          
+          ### 🔗 Quick Links
+          - [Azure Portal - Resource Group](https://portal.azure.com/#@/resource/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.AZURE_RESOURCE_GROUP }})
+          - [GitHub Runners](https://github.com/${{ github.repository }}/settings/actions/runners)
+          EOF
+          
+          echo "✅ Summary generated"
+
+      - name: 🧹 Clean up SSH private key
         if: always()
         working-directory: ${{ github.workspace }}
-        run: rm -f ansible/runner_key.pem
+        run: |
+          rm -f ansible/runner_key.pem
+          echo "✅ Cleanup complete"
