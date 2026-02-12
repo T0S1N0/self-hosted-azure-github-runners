@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and adjust for your environment.
+# terraform.tfvars is gitignored and must not contain secrets in version control.
+
+resource_group_name = "github-runners-rg"
+location            = "East US"
+environment         = "dev"
+runner_count        = 3
+vm_size             = "Standard_B2s"
+admin_username      = "azureuser"
+
+# Path to your SSH public key for VM login. Leave empty to let Terraform generate a key.
+# ssh_public_key_path = "~/.ssh/id_rsa.pub"
+
+runner_name_prefix = "runner"

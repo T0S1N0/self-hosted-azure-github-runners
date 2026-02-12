@@ -1,0 +1,104 @@
+---
+# Playbook to install and configure GitHub Actions self-hosted runners on Azure VMs.
+# Run after Terraform has provisioned the VMs. Pass the registration token via environment:
+#   GITHUB_RUNNER_REGISTRATION_TOKEN=<token> ansible-playbook -i hosts configure_runners.yml
+#
+# Get the token from: GitHub repo -> Settings -> Actions -> Runners -> Add new runner (self-hosted)
+
+- name: Configure GitHub Actions runners
+  hosts: runners
+  become: true
+  vars:
+    runner_version: "2.321.0"
+    runner_dir: "/opt/actions-runner"
+    runner_user: "{{ ansible_user }}"
+
+  tasks:
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - jq
+          - unzip
+          - libicu-dev
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Create runner directory
+      ansible.builtin.file:
+        path: "{{ runner_dir }}"
+        state: directory
+        mode: "0755"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Check if runner is already configured
+      ansible.builtin.stat:
+        path: "{{ runner_dir }}/.runner"
+      register: runner_configured
+
+    - name: Fail if registration token is missing (new setup)
+      ansible.builtin.fail:
+        msg: "Set GITHUB_RUNNER_REGISTRATION_TOKEN (from GitHub Settings -> Actions -> Runners -> Add new runner)."
+      when:
+        - not runner_configured.stat.exists
+        - not github_runner_registration_token | default('') | length
+
+    - name: Download GitHub Actions runner package
+      ansible.builtin.get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        mode: "0644"
+      when: not runner_configured.stat.exists
+
+    - name: Extract runner package
+      ansible.builtin.unarchive:
+        src: "/tmp/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "{{ runner_dir }}"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        creates: "{{ runner_dir }}/config.sh"
+      when: not runner_configured.stat.exists
+
+    - name: Remove runner archive
+      ansible.builtin.file:
+        path: "/tmp/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        state: absent
+      when: not runner_configured.stat.exists
+
+    - name: Configure the runner (unattended)
+      ansible.builtin.command:
+        cmd: "./config.sh --url {{ github_repo_url }} --token {{ github_runner_registration_token }} --name {{ runner_name }} --unattended --replace"
+        chdir: "{{ runner_dir }}"
+        creates: "{{ runner_dir }}/.runner"
+      environment:
+        RUNNER_ALLOW_RUNASROOT: "1"
+      become_user: "{{ ansible_user }}"
+      when:
+        - not runner_configured.stat.exists
+        - github_runner_registration_token is defined
+        - github_runner_registration_token | length > 0
+
+    - name: Install runner as a service
+      ansible.builtin.command:
+        cmd: "./svc.sh install"
+        chdir: "{{ runner_dir }}"
+      become_user: "{{ ansible_user }}"
+      when: not runner_configured.stat.exists
+
+    - name: Start runner service
+      ansible.builtin.command:
+        cmd: "./svc.sh start"
+        chdir: "{{ runner_dir }}"
+      become_user: "{{ ansible_user }}"
+      when: not runner_configured.stat.exists
+
+    - name: Ensure runner service is running (already configured)
+      ansible.builtin.command:
+        cmd: "./svc.sh start"
+        chdir: "{{ runner_dir }}"
+      become_user: "{{ ansible_user }}"
+      when: runner_configured.stat.exists

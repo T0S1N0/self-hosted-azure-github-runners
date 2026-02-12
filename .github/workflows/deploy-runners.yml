@@ -1,0 +1,109 @@
+# Deploy self-hosted GitHub Actions runners on Azure (Terraform + Ansible).
+# Requires: Azure OIDC (or service principal) and optional Terraform backend for state.
+# See README "Automated deployment (GitHub Actions)" for setup.
+
+name: Deploy self-hosted runners
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-runners.yml'
+      - 'terraform/**'
+      - 'ansible/**'
+      - 'scripts/**'
+
+permissions:
+  contents: read
+  id-token: write   # for Azure OIDC
+  actions: write    # for creating runner registration token
+
+env:
+  TF_VAR_runner_count: 3
+  TF_VAR_admin_username: azureuser
+
+jobs:
+  deploy:
+    name: Terraform + Ansible
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate SSH key pair
+        id: ssh-key
+        run: |
+          ssh-keygen -t rsa -b 4096 -f runner_key -N "" -C "github-actions"
+          echo "public_key<<EOF" >> $GITHUB_OUTPUT
+          cat runner_key.pub >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          # Private key for Ansible (later step); store in runner for this job
+          cp runner_key "$GITHUB_WORKSPACE/ansible/runner_key.pem"
+          chmod 600 "$GITHUB_WORKSPACE/ansible/runner_key.pem"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          ARM_USE_OIDC: true
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+        env:
+          ARM_USE_OIDC: true
+          TF_VAR_ssh_public_key: ${{ steps.ssh-key.outputs.public_key }}
+          # Optional: pass tfvars from secrets or use defaults
+          # TF_VAR_resource_group_name: ${{ secrets.TF_VAR_resource_group_name }}
+
+      - name: Get runner registration token
+        id: token
+        run: |
+          TOKEN=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token" \
+            | jq -r '.token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "GITHUB_RUNNER_REGISTRATION_TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Generate Ansible inventory
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          chmod +x scripts/generate-inventory.sh
+          ./scripts/generate-inventory.sh ${{ env.TF_VAR_admin_username }}
+
+      - name: Set up Ansible
+        run: |
+          sudo apt-get update && sudo apt-get install -y ansible
+        working-directory: ${{ github.workspace }}
+
+      - name: Configure runners (Ansible)
+        run: |
+          cd ansible
+          export GITHUB_RUNNER_REGISTRATION_TOKEN="${{ steps.token.outputs.token }}"
+          ansible-playbook configure_runners.yml \
+            -e "github_repo_url=https://github.com/${{ github.repository }}" \
+            -e "ansible_ssh_private_key_file=${{ github.workspace }}/ansible/runner_key.pem"
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: false
+        working-directory: ${{ github.workspace }}
+
+      - name: Clean up runner key from workspace
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE/ansible/runner_key.pem"

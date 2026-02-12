@@ -1,0 +1,13 @@
+# Variables for the runners group. Override in inventory or via -e.
+# github_repo_url: set below or via -e (e.g. https://github.com/your-org/your-repo)
+# github_runner_registration_token: from env GITHUB_RUNNER_REGISTRATION_TOKEN (do not commit)
+# runner_name: set per-host in inventory or default below
+
+github_repo_url: "https://github.com/REPLACE_ORG/REPLACE_REPO"
+
+# Token from GitHub: Settings -> Actions -> Runners -> Add new runner. Pass via env:
+#   export GITHUB_RUNNER_REGISTRATION_TOKEN=your_token
+github_runner_registration_token: "{{ lookup('env', 'GITHUB_RUNNER_REGISTRATION_TOKEN') }}"
+
+# Default runner name; override per host in inventory with runner_name=runner-1 etc.
+runner_name: "{{ inventory_hostname_short }}"
