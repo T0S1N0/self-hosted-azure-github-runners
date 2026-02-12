@@ -84,21 +84,18 @@
 
     - name: Install runner as a service
       ansible.builtin.command:
-        cmd: "./svc.sh install"
+        cmd: "./svc.sh install {{ ansible_user }}"
         chdir: "{{ runner_dir }}"
-      become_user: "{{ ansible_user }}"
       when: not runner_configured.stat.exists
 
     - name: Start runner service
       ansible.builtin.command:
         cmd: "./svc.sh start"
         chdir: "{{ runner_dir }}"
-      become_user: "{{ ansible_user }}"
       when: not runner_configured.stat.exists
 
     - name: Ensure runner service is running (already configured)
       ansible.builtin.command:
         cmd: "./svc.sh start"
         chdir: "{{ runner_dir }}"
-      become_user: "{{ ansible_user }}"
       when: runner_configured.stat.exists
