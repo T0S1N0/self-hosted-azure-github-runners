@@ -2,7 +2,7 @@
 # terraform.tfvars is gitignored and must not contain secrets in version control.
 
 resource_group_name = "github-runners-rg"
-location            = "East US"
+location            = "West Europe"
 environment         = "dev"
 runner_count        = 3
 vm_size             = "Standard_B1s"
