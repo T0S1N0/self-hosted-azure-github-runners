@@ -26,6 +26,10 @@ on:
       - 'ansible/**'
       - 'scripts/**'
 
+concurrency:
+  group: runners-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   id-token: write   # Azure OIDC authentication
@@ -152,6 +156,12 @@ jobs:
 
             if [[ "${code}" -eq 0 ]]; then
               break
+            fi
+
+            if grep -q "Saved plan is stale" apply.log; then
+              echo "Plan is stale (state changed). Re-planning then retrying..."
+              terraform plan -out=tfplan -input=false -lock-timeout=5m
+              continue
             fi
 
             if grep -q "NicReservedForAnotherVm" apply.log; then
