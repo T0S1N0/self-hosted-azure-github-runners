@@ -5,7 +5,7 @@ resource_group_name = "github-runners-rg"
 location            = "West Europe"
 environment         = "dev"
 runner_count        = 3
-vm_size             = "Standard_B1s"
+vm_size             = "Standard_D2as_v4"
 admin_username      = "azureuser"
 
 # Path to your SSH public key for VM login. Leave empty to let Terraform generate a key.

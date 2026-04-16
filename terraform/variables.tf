@@ -29,7 +29,7 @@ variable "runner_count" {
 variable "vm_size" {
   description = "Azure VM size for the runner instances"
   type        = string
-  default     = "Standard_B1s"
+  default     = "Standard_D2as_v4"
 }
 
 variable "admin_username" {
