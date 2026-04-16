@@ -128,7 +128,7 @@ jobs:
         id: plan
         run: |
           echo "::group::Planning infrastructure changes"
-          terraform plan -out=tfplan -input=false
+          terraform plan -out=tfplan -input=false -lock-timeout=5m
           echo "::endgroup::"
         env:
           ARM_USE_OIDC: "true"
@@ -146,7 +146,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "Attempt ${attempt}/3"
             set +e
-            terraform apply -auto-approve tfplan 2>&1 | tee apply.log
+            terraform apply -auto-approve -lock-timeout=5m tfplan 2>&1 | tee apply.log
             code="${PIPESTATUS[0]}"
             set -e
 
@@ -157,6 +157,12 @@ jobs:
             if grep -q "NicReservedForAnotherVm" apply.log; then
               echo "NIC reservation detected. Waiting 190s then retrying..."
               sleep 190
+              continue
+            fi
+
+            if grep -q "InvalidResourceReference" apply.log; then
+              echo "Transient InvalidResourceReference detected. Waiting 45s then retrying..."
+              sleep 45
               continue
             fi
 
