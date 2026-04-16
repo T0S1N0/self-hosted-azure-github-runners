@@ -134,9 +134,9 @@ jobs:
           set -euo pipefail
           echo "::group::Hard reset resource group (if needed)"
 
-          if terraform state list >/dev/null 2>&1 && [[ -z "$(terraform state list)" ]]; then
+          if terraform state list >/dev/null 2>&1 && ! terraform state list | grep -q '^azurerm_'; then
             if az group exists -n "${AZURE_RESOURCE_GROUP}" | grep -qi true; then
-              echo "State is empty but RG ${AZURE_RESOURCE_GROUP} exists. Deleting RG to avoid import collisions..."
+              echo "State has no azurerm resources but RG ${AZURE_RESOURCE_GROUP} exists. Deleting RG to avoid import collisions..."
               az group delete -n "${AZURE_RESOURCE_GROUP}" --yes --no-wait
 
               for i in $(seq 1 90); do
