@@ -18,6 +18,14 @@ on:
           - '3'
           - '5'
           - '10'
+      reset:
+        description: 'Hard reset (delete RG + tfstate blob) before deploy'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   push:
     branches: [deploy-azure-vss]
     paths:
@@ -40,6 +48,7 @@ env:
   TF_VAR_runner_count: ${{ github.event.inputs.runner_count || '3' }}
   TF_VAR_admin_username: azureuser
   AZURE_RESOURCE_GROUP: github-runners-rg
+  RESET_BEFORE_DEPLOY: ${{ github.event.inputs.reset || 'false' }}
 
 jobs:
   deploy:
@@ -86,6 +95,7 @@ jobs:
           terraform_wrapper: false
 
       - name: 🔧 Terraform Init
+        id: init
         run: |
           echo "::group::Initializing Terraform with Azure backend"
           set -euo pipefail
@@ -119,6 +129,12 @@ jobs:
           access_key           = "${ACCESS_KEY}"
           EOF
 
+          echo "tfstate_rg=${RG}" >> "$GITHUB_OUTPUT"
+          echo "tfstate_container=${CONTAINER}" >> "$GITHUB_OUTPUT"
+          echo "tfstate_storage_account=${SA}" >> "$GITHUB_OUTPUT"
+          echo "tfstate_access_key=${ACCESS_KEY}" >> "$GITHUB_OUTPUT"
+          echo "tfstate_key=${KEY}" >> "$GITHUB_OUTPUT"
+
           terraform init -backend-config=backend.hcl
           echo "::endgroup::"
           echo "✅ Terraform initialized (backend: azurerm)"
@@ -128,33 +144,44 @@ jobs:
           ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: 🧹 Hard reset RG if state is empty
+      - name: 🧹 Hard reset (RG + state) if enabled
         shell: bash
         run: |
           set -euo pipefail
-          echo "::group::Hard reset resource group (if needed)"
+          echo "::group::Hard reset (if enabled)"
 
-          if terraform state list >/dev/null 2>&1 && ! terraform state list | grep -q '^azurerm_'; then
-            if az group exists -n "${AZURE_RESOURCE_GROUP}" | grep -qi true; then
-              echo "State has no azurerm resources but RG ${AZURE_RESOURCE_GROUP} exists. Deleting RG to avoid import collisions..."
-              az group delete -n "${AZURE_RESOURCE_GROUP}" --yes --no-wait
-
-              for i in $(seq 1 90); do
-                if az group exists -n "${AZURE_RESOURCE_GROUP}" | grep -qi false; then
-                  echo "RG deleted."
-                  echo "::endgroup::"
-                  exit 0
-                fi
-                sleep 10
-              done
-
-              echo "Timed out waiting for RG deletion." >&2
-              echo "::endgroup::"
-              exit 1
-            fi
+          if [[ "${RESET_BEFORE_DEPLOY}" != "true" ]]; then
+            echo "RESET_BEFORE_DEPLOY=false; skipping."
+            echo "::endgroup::"
+            exit 0
           fi
 
-          echo "No reset required."
+          ACCOUNT="${{ steps.init.outputs.tfstate_storage_account }}"
+          ACCESS_KEY="${{ steps.init.outputs.tfstate_access_key }}"
+          CONTAINER="${{ steps.init.outputs.tfstate_container }}"
+          BLOB="${{ steps.init.outputs.tfstate_key }}"
+
+          echo "Breaking lease (if any) and deleting tfstate blob..."
+          az storage blob lease break --account-name "${ACCOUNT}" --account-key "${ACCESS_KEY}" --container-name "${CONTAINER}" --blob-name "${BLOB}" || true
+          az storage blob delete --account-name "${ACCOUNT}" --account-key "${ACCESS_KEY}" --container-name "${CONTAINER}" --name "${BLOB}" || true
+
+          if az group exists -n "${AZURE_RESOURCE_GROUP}" | grep -qi true; then
+            echo "Deleting RG ${AZURE_RESOURCE_GROUP}..."
+            az group delete -n "${AZURE_RESOURCE_GROUP}" --yes --no-wait
+            for i in $(seq 1 120); do
+              if az group exists -n "${AZURE_RESOURCE_GROUP}" | grep -qi false; then
+                echo "RG deleted."
+                echo "::endgroup::"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "Timed out waiting for RG deletion." >&2
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          echo "RG not present; reset complete."
           echo "::endgroup::"
 
       - name: 📋 Terraform Plan
