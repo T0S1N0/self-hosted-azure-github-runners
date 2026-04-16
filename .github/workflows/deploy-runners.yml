@@ -141,7 +141,27 @@ jobs:
         id: terraform-apply
         run: |
           echo "::group::Applying Terraform configuration"
-          terraform apply -auto-approve tfplan
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}/3"
+            set +e
+            terraform apply -auto-approve tfplan 2>&1 | tee apply.log
+            code="${PIPESTATUS[0]}"
+            set -e
+
+            if [[ "${code}" -eq 0 ]]; then
+              break
+            fi
+
+            if grep -q "NicReservedForAnotherVm" apply.log; then
+              echo "NIC reservation detected. Waiting 190s then retrying..."
+              sleep 190
+              continue
+            fi
+
+            exit "${code}"
+          done
           echo "::endgroup::"
           
           echo "::group::Resource outputs"
